@@ -142,7 +142,7 @@
   .n8n-status.disconnected .n8n-status-dot { background: var(--accent); }
   .n8n-status.local .n8n-status-dot { background: #3b82f6; }
   .chat-messages { flex: 1; overflow-y: auto; padding: 16px 0; display: flex; flex-direction: column; gap: 12px; }
-  .msg { max-width: 78%; padding: 12px 16px; border-radius: 16px; font-size: .9rem; line-height: 1.55; }
+  .msg { max-width: 78%; padding: 12px 16px; border-radius: 16px; font-size: .9rem; line-height: 1.55; white-space: pre-wrap; }
   .msg-bot { background: #f1f5f9; align-self: flex-start; border-bottom-left-radius: 4px; }
   .msg-user { background: var(--primary); color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
   .msg-bot .match-card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 8px; }
@@ -1169,24 +1169,63 @@ const AIMatching = (() => {
   }
 
   function parseN8nResponse(rawText) {
-    const parsed = JSON.parse(rawText);
-
-    if (typeof parsed === 'string') return parsed;
+    const parsed = parsePossiblyNestedJson(rawText);
+    const extracted = extractTextFromN8nPayload(parsed);
+    if (extracted) return extracted;
     if (parsed == null) return '';
+    if (typeof parsed === 'string') return parsed;
     if (Array.isArray(parsed)) return JSON.stringify(parsed, null, 2);
+
+    return JSON.stringify(parsed, null, 2);
+  }
+
+  function parsePossiblyNestedJson(value, depth = 0) {
+    if (depth > 3 || typeof value !== 'string') return value;
+
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+
+    const looksJson =
+      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+      (trimmed.startsWith('[') && trimmed.endsWith(']')) ||
+      (trimmed.startsWith('"') && trimmed.endsWith('"'));
+
+    if (!looksJson) return value;
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      return typeof parsed === 'string'
+        ? parsePossiblyNestedJson(parsed, depth + 1)
+        : parsed;
+    } catch {
+      return value;
+    }
+  }
+
+  function extractTextFromN8nPayload(payload) {
+    if (payload == null) return '';
+    if (typeof payload === 'string') return payload;
+
+    if (Array.isArray(payload)) {
+      for (const item of payload) {
+        const extracted = extractTextFromN8nPayload(item);
+        if (extracted) return extracted;
+      }
+      return '';
+    }
 
     const directFields = ['reply', 'message', 'output', 'text', 'content', 'response', 'answer'];
     for (const field of directFields) {
-      if (typeof parsed[field] === 'string' && parsed[field].trim()) return parsed[field];
+      if (typeof payload[field] === 'string' && payload[field].trim()) return payload[field];
     }
 
-    if (parsed.data && typeof parsed.data === 'object') {
+    if (payload.data && typeof payload.data === 'object') {
       for (const field of directFields) {
-        if (typeof parsed.data[field] === 'string' && parsed.data[field].trim()) return parsed.data[field];
+        if (typeof payload.data[field] === 'string' && payload.data[field].trim()) return payload.data[field];
       }
     }
 
-    return JSON.stringify(parsed, null, 2);
+    return '';
   }
 
   // -- Send to n8n Webhook --
