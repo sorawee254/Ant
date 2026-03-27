@@ -131,12 +131,14 @@
   .chat-header { text-align: center; padding: 20px 0 10px; }
   .chat-header h2 { font-size: 1.4rem; }
   .chat-header p { color: var(--text-light); font-size: .9rem; }
-  .n8n-status { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; padding: 4px 12px; border-radius: 20px; font-size: .75rem; font-weight: 600; }
+  .n8n-status { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; max-width: 100%; margin-top: 8px; padding: 4px 12px; border-radius: 20px; font-size: .75rem; font-weight: 600; text-align: center; }
   .n8n-status.connected { background: #eff6ff; color: #1d4ed8; }
+  .n8n-status.checking { background: #fff7ed; color: #c2410c; }
   .n8n-status.disconnected { background: #ffedd5; color: var(--accent-dark); }
   .n8n-status.local { background: #eff6ff; color: #1d4ed8; }
   .n8n-status-dot { width: 8px; height: 8px; border-radius: 50%; }
   .n8n-status.connected .n8n-status-dot { background: #1d4ed8; }
+  .n8n-status.checking .n8n-status-dot { background: #f97316; }
   .n8n-status.disconnected .n8n-status-dot { background: var(--accent); }
   .n8n-status.local .n8n-status-dot { background: #3b82f6; }
   .chat-messages { flex: 1; overflow-y: auto; padding: 16px 0; display: flex; flex-direction: column; gap: 12px; }
@@ -1112,9 +1114,22 @@ const AIMatching = (() => {
     DOM.n8nStatusText.textContent = text;
   }
 
+  function getN8nErrorMessage(err) {
+    if (err?.name === 'AbortError') {
+      return 'n8n timeout: no response within ' + Math.round(CONFIG.n8n.timeout / 1000) + 's';
+    }
+    if (err instanceof TypeError) {
+      return 'n8n blocked by browser or CORS policy';
+    }
+    if (err?.message) {
+      return err.message;
+    }
+    return 'Unknown n8n error';
+  }
+
   function initStatus() {
     if (CONFIG.n8n.enabled) {
-      updateStatus('local', 'n8n Ready');
+      updateStatus('local', 'n8n not checked yet');
     } else {
       updateStatus('local', 'n8n Not Connected');
     }
@@ -1130,7 +1145,7 @@ const AIMatching = (() => {
     const timer = setTimeout(() => controller.abort(), CONFIG.n8n.timeout);
 
     try {
-      updateStatus('local', 'Sending to n8n...');
+      updateStatus('checking', 'Checking n8n connection...');
       const res = await fetch(CONFIG.n8n.webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
@@ -1149,14 +1164,9 @@ const AIMatching = (() => {
       if (retryCount < CONFIG.n8n.retries) {
         return sendToN8n(message, retryCount + 1);
       }
-      updateStatus('disconnected', 'n8n Error');
-      if (err?.name === 'AbortError') {
-        throw new Error('Request timed out while waiting for n8n.');
-      }
-      if (err instanceof TypeError) {
-        throw new Error('Browser blocked the request or n8n did not allow cross-origin POST.');
-      }
-      throw err;
+      const errorMessage = getN8nErrorMessage(err);
+      updateStatus('disconnected', errorMessage);
+      throw new Error(errorMessage);
     }
   }
 
