@@ -582,6 +582,19 @@ function generateSessionId() {
   return 'sess_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 }
 
+function getBrowserSessionId() {
+  const storageKey = 'ananta_browser_session_id';
+  try {
+    const existing = window.localStorage.getItem(storageKey);
+    if (existing) return existing;
+    const created = generateSessionId();
+    window.localStorage.setItem(storageKey, created);
+    return created;
+  } catch {
+    return generateSessionId();
+  }
+}
+
 // ============================================================
 // DATA LAYER
 // ============================================================
@@ -1105,7 +1118,7 @@ function closeModal(id) { document.getElementById(id).classList.remove('show'); 
 // n8n AI MATCHING MODULE
 // ============================================================
 const AIMatching = (() => {
-  const sessionId = generateSessionId();
+  const sessionId = getBrowserSessionId();
   let isProcessing = false;
 
   // -- n8n Connection Status --
@@ -1136,7 +1149,44 @@ const AIMatching = (() => {
   }
 
   async function readN8nResponse(res) {
-    return await res.text();
+    const rawText = await res.text();
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+
+    if (contentType.includes('application/json')) {
+      return parseN8nResponse(rawText);
+    }
+
+    const trimmed = rawText.trim();
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        return parseN8nResponse(trimmed);
+      } catch {
+        return rawText;
+      }
+    }
+
+    return rawText;
+  }
+
+  function parseN8nResponse(rawText) {
+    const parsed = JSON.parse(rawText);
+
+    if (typeof parsed === 'string') return parsed;
+    if (parsed == null) return '';
+    if (Array.isArray(parsed)) return JSON.stringify(parsed, null, 2);
+
+    const directFields = ['reply', 'message', 'output', 'text', 'content', 'response', 'answer'];
+    for (const field of directFields) {
+      if (typeof parsed[field] === 'string' && parsed[field].trim()) return parsed[field];
+    }
+
+    if (parsed.data && typeof parsed.data === 'object') {
+      for (const field of directFields) {
+        if (typeof parsed.data[field] === 'string' && parsed.data[field].trim()) return parsed.data[field];
+      }
+    }
+
+    return JSON.stringify(parsed, null, 2);
   }
 
   // -- Send to n8n Webhook --
