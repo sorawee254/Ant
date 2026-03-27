@@ -1126,8 +1126,6 @@ const AIMatching = (() => {
 
   // -- Send to n8n Webhook --
   async function sendToN8n(message, retryCount = 0) {
-    const payload = { message };
-
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), CONFIG.n8n.timeout);
 
@@ -1135,8 +1133,8 @@ const AIMatching = (() => {
       updateStatus('local', 'Sending to n8n...');
       const res = await fetch(CONFIG.n8n.webhookUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: message,
         signal: controller.signal,
       });
       clearTimeout(timer);
@@ -1152,6 +1150,12 @@ const AIMatching = (() => {
         return sendToN8n(message, retryCount + 1);
       }
       updateStatus('disconnected', 'n8n Error');
+      if (err?.name === 'AbortError') {
+        throw new Error('Request timed out while waiting for n8n.');
+      }
+      if (err instanceof TypeError) {
+        throw new Error('Browser blocked the request or n8n did not allow cross-origin POST.');
+      }
       throw err;
     }
   }
