@@ -1114,57 +1114,25 @@ const AIMatching = (() => {
 
   function initStatus() {
     if (CONFIG.n8n.enabled) {
-      updateStatus('connected', 'Connected to n8n');
-      pingN8n();
+      updateStatus('local', 'n8n Ready');
     } else {
       updateStatus('local', 'n8n Not Connected');
     }
   }
 
-  async function pingN8n() {
-    if (!CONFIG.n8n.enabled) return;
-    try {
-      const controller = new AbortController();
-      setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(CONFIG.n8n.webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: '__ping__', sessionId }),
-        signal: controller.signal,
-      });
-      if (res.ok) {
-        updateStatus('connected', 'n8n Connected');
-      } else {
-        updateStatus('disconnected', 'n8n Unreachable');
-      }
-    } catch {
-      updateStatus('disconnected', 'n8n Unreachable');
-    }
+  async function readN8nResponse(res) {
+    return await res.text();
   }
 
   // -- Send to n8n Webhook --
   async function sendToN8n(message, retryCount = 0) {
-    const payload = {
-      message,
-      sessionId,
-      context: {
-        timestamp: new Date().toISOString(),
-      },
-    };
-
-    // ส่ง listings context ไปด้วยถ้าเปิดใช้งาน (ให้ n8n AI วิเคราะห์ matching)
-    if (CONFIG.n8n.sendListingsContext) {
-      payload.context.listings = listings.map(l => ({
-        id: l.id, type: l.type, category: l.category,
-        title: l.title, qty: l.qty, price: l.price,
-        location: l.location, company: l.company, tags: l.tags,
-      }));
-    }
+    const payload = { message };
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), CONFIG.n8n.timeout);
 
     try {
+      updateStatus('local', 'Sending to n8n...');
       const res = await fetch(CONFIG.n8n.webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1173,11 +1141,11 @@ const AIMatching = (() => {
       });
       clearTimeout(timer);
 
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
+      const responseBody = await readN8nResponse(res);
+      if (!res.ok) throw new Error(responseBody || ('HTTP ' + res.status));
 
       updateStatus('connected', 'n8n Connected');
-      return { source: 'n8n', ...data };
+      return responseBody;
     } catch (err) {
       clearTimeout(timer);
       if (retryCount < CONFIG.n8n.retries) {
@@ -1186,24 +1154,6 @@ const AIMatching = (() => {
       updateStatus('disconnected', 'n8n Error');
       throw err;
     }
-  }
-
-  // -- Format n8n Response --
-  function formatN8nResponse(data) {
-    let html = data.reply || '';
-
-    // ถ้า n8n ส่ง matches array กลับมา ให้ render เป็น match cards
-    if (data.matches && data.matches.length) {
-      html += data.matches.map(m =>
-        '<div class="match-card">' +
-          '<h4>' + (m.emoji || '📦') + ' ' + escapeHtml(m.title || '') + '</h4>' +
-          '<p><strong>' + escapeHtml(m.company || '') + '</strong> · ' + escapeHtml(m.location || '') + ' · ' + escapeHtml(m.qty || '') + '</p>' +
-          (m.price ? '<p>Price: <strong>' + formatPrice(m.price) + '</strong></p>' : '') +
-        '</div>'
-      ).join('');
-    }
-
-    return html;
   }
 
   // -- Main Process Message --
@@ -1218,17 +1168,17 @@ const AIMatching = (() => {
     addChatMessage(message, 'user');
     showTyping();
 
-    let responseHtml = '';
+    let responseText = '';
 
     try {
       const n8nResult = await sendToN8n(message);
-      responseHtml = formatN8nResponse(n8nResult || {});
+      responseText = n8nResult || 'No response from n8n.';
     } catch (err) {
-      responseHtml = 'n8n request failed. Check webhook URL and workflow response.';
+      responseText = err?.message || 'n8n request failed. Check webhook URL and workflow response.';
     }
 
     hideTyping();
-    addChatMessage(responseHtml, 'bot');
+    addChatMessage(responseText, 'bot');
     isProcessing = false;
   }
 
@@ -1251,11 +1201,7 @@ const AIMatching = (() => {
   function addChatMessage(content, type) {
     const div = document.createElement('div');
     div.className = 'msg msg-' + (type === 'user' ? 'user' : 'bot');
-    if (type === 'user') {
-      div.textContent = content;
-    } else {
-      div.innerHTML = content;
-    }
+    div.textContent = content;
     DOM.chatMessages.appendChild(div);
     scrollChat();
   }
